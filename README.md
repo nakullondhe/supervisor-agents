@@ -41,6 +41,21 @@ Each agent receives a primary model and a ranked fallback set. A fallback must s
 
 The supervisor never retries forever and never silently duplicates a model.
 
+## Engine CLI
+
+The dependency-free engine stores state under `.supervisor/` by default:
+
+```powershell
+python scripts/supervisor_engine.py init
+python scripts/supervisor_engine.py inventory
+$task = python scripts/supervisor_engine.py add-task "Repository review" "Inspect the repository and report risks."
+python scripts/supervisor_engine.py choose --needs-tools --needs-reasoning
+python scripts/supervisor_engine.py context-pack $task --budget 48000
+python scripts/supervisor_engine.py run $task opencode/nemotron-3.5-lightning-free
+```
+
+State includes task status, used models, reports, attempts, errors, and event history. `run` invokes `opencode run`, writes each attempt to `reports/`, and retries transient failures with bounded backoff. The model router is intentionally separate from the Codex skill so developers can replace OpenCode with Hermes, a local MCP adapter, or another worker runtime without changing the state model.
+
 ## External memory
 
 Use Markdown/Obsidian for human-owned durable knowledge and SQLite/JSONL for operational state. A suggested layout is:

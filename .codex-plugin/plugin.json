@@ -1,6 +1,6 @@
 {
   "name": "supervisor-agents",
-  "version": "0.1.0+codex.20260910161630",
+  "version": "0.1.0+codex.20260911085150",
   "description": "A supervisor-only operating mode that plans work, delegates independent tasks to multiple agents, consolidates reports, and verifies results with the best available local tools.",
   "author": {
     "name": "Local developer"

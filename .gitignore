@@ -7,5 +7,6 @@ Thumbs.db
 runs/
 state/
 memory.db
+.tmp-test-state/
 __pycache__/
 *.pyc
