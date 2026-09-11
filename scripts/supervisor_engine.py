@@ -220,32 +220,55 @@ def context_pack(store: StateStore, state: dict[str, Any], task_id: str, budget:
 
 
 def run_worker(store: StateStore, state: dict[str, Any], task_id: str, model: str,
-               opencode: str, max_retries: int, context_budget: int) -> int:
+               opencode: str, max_retries: int, context_budget: int,
+               fallback_models: list[str] | None = None) -> int:
     task = state["tasks"][task_id]
     task["model"] = model
     task["status"] = "running"
     store.save(state)
     prompt = context_pack(store, state, task_id, context_budget)
-    for attempt in range(1, max_retries + 2):
-        task["attempts"] = attempt
-        proc = subprocess.run([resolve_command(opencode), "run", "-m", model, prompt], text=True, capture_output=True, check=False)
-        output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
-        report = store.reports / f"{task_id}-attempt-{attempt}.md"
-        atomic_write(report, f"# Agent report: {task_id}\n\nModel: `{model}`\nAttempt: {attempt}\n\n{output}")
-        task["report_path"] = str(report)
-        if proc.returncode == 0:
-            task["status"] = "reported"
-            store.event(state, "worker_reported", task_id=task_id, model=model, attempt=attempt)
-            return 0
-        error_type = classify_error(output)
-        task["last_error"] = error_type
-        store.event(state, "worker_failed", task_id=task_id, model=model, attempt=attempt, error_type=error_type)
-        if error_type not in TRANSIENT_ERRORS or attempt > max_retries:
-            task["status"] = "failed"
-            store.save(state)
-            return proc.returncode or 1
-        delay = min(60, 2 ** (attempt - 1)) + random.uniform(0, 0.5)
-        time.sleep(delay)
+    candidates = [model] + [m for m in (fallback_models or []) if m != model]
+    candidate_index = 0
+    attempt = 0
+    while candidate_index < len(candidates):
+        model = candidates[candidate_index]
+        if model in state.setdefault("used_models", []) and model != task.get("model"):
+            candidate_index += 1
+            continue
+        if model != task.get("model"):
+            previous = task.get("model")
+            state["used_models"].append(model)
+            state.setdefault("fallbacks", []).append({"task_id": task_id, "from": previous, "to": model, "at": now()})
+            task["model"] = model
+            store.event(state, "fallback_selected", task_id=task_id, from_model=previous, to_model=model)
+        for retry in range(1, max_retries + 2):
+            attempt += 1
+            task["attempts"] = attempt
+            proc = subprocess.run([resolve_command(opencode), "run", "-m", model, prompt], text=True, capture_output=True, check=False)
+            output = proc.stdout + ("\n" + proc.stderr if proc.stderr else "")
+            report = store.reports / f"{task_id}-attempt-{attempt}.md"
+            atomic_write(report, f"# Agent report: {task_id}\n\nModel: `{model}`\nAttempt: {attempt}\n\n{output}")
+            task["report_path"] = str(report)
+            if proc.returncode == 0:
+                task["status"] = "reported"
+                store.event(state, "worker_reported", task_id=task_id, model=model, attempt=attempt)
+                return 0
+            error_type = classify_error(output)
+            task["last_error"] = error_type
+            store.event(state, "worker_failed", task_id=task_id, model=model, attempt=attempt, error_type=error_type)
+            if error_type not in TRANSIENT_ERRORS:
+                task["status"] = "failed"
+                store.save(state)
+                return proc.returncode or 1
+            if retry <= max_retries:
+                delay = min(60, 2 ** (retry - 1)) + random.uniform(0, 0.5)
+                time.sleep(delay)
+            else:
+                state.setdefault("unavailable_models", {})[model] = {"at": now(), "reason": error_type}
+                store.save(state)
+        candidate_index += 1
+    task["status"] = "failed"
+    store.save(state)
     return 1
 
 
@@ -274,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--opencode", default="opencode")
     run.add_argument("--max-retries", type=int, default=2)
     run.add_argument("--context-budget", type=int, default=DEFAULT_CONTEXT_CHARS)
+    run.add_argument("--fallback", action="append", default=[], help="ordered fallback model; repeat for multiple")
     args = parser.parse_args(argv)
     store = StateStore(Path(args.state_dir).resolve())
     state = store.load()
@@ -304,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "run":
         return run_worker(store, state, args.task_id, args.model, args.opencode,
-                          args.max_retries, args.context_budget)
+                          args.max_retries, args.context_budget, args.fallback)
     return 2
 
 

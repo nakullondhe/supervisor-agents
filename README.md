@@ -51,7 +51,9 @@ python scripts/supervisor_engine.py inventory
 $task = python scripts/supervisor_engine.py add-task "Repository review" "Inspect the repository and report risks."
 python scripts/supervisor_engine.py choose --needs-tools --needs-reasoning
 python scripts/supervisor_engine.py context-pack $task --budget 48000
-python scripts/supervisor_engine.py run $task opencode/nemotron-3.5-lightning-free
+python scripts/supervisor_engine.py run $task opencode/nemotron-3.5-lightning-free `
+  --fallback opencode/ling-3.0-flash-fin-free `
+  --fallback opencode/mimo-v2.5-free
 ```
 
 State includes task status, used models, reports, attempts, errors, and event history. `run` invokes `opencode run`, writes each attempt to `reports/`, and retries transient failures with bounded backoff. The model router is intentionally separate from the Codex skill so developers can replace OpenCode with Hermes, a local MCP adapter, or another worker runtime without changing the state model.
